@@ -255,7 +255,11 @@ class AdvancedDialog:
         self.dialog.wait_window()
 
 class BuildProgressDialog:
+    feature/refactor-and-improve-export
     def __init__(self, parent, config: AppConfig):
+
+    def __init__(self, parent, config: AppConfig, use_bullet_proof: bool = True):
+    main
         self.parent = parent
         self.config = config
         self.dialog = tk.Toplevel(self.parent)
