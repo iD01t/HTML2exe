@@ -30,12 +30,10 @@ dependencies = [
     "psutil>=5.9.0",
     "packaging>=23.0",
     'pywin32>=306; platform_system=="Windows"',
-    "beautifulsoup4>=4.12.3",
-    "faker>=24.4.0",
 ]
 
 [project.scripts]
-html2exe = "html2exe.main:entry_point"
+html2exe-pro = "html2exe.main:main"
 
 [project.urls]
 "Homepage" = "https://github.com/pypa/sampleproject"

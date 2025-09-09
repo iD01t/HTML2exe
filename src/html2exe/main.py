@@ -1,35 +1,39 @@
 import sys
 import os
-import traceback
 
-def entry_point():
+APP_NAME = "HTML2EXE Pro Premium"
+APP_VERSION = "2.0.1"
+
+def main():
     """Main entry point - CLI or GUI based on arguments."""
+    # It's better to handle dependencies inside the utils module
+    from .utils.dependencies import check_and_install_dependencies
+    check_and_install_dependencies()
+
+    from rich.console import Console
     from .cli.main import app as cli_app
     from .gui.main import ModernGUI
 
+    console = Console()
     try:
-        if len(sys.argv) == 1 or (len(sys.argv) > 1 and sys.argv[1] == 'gui'):
-             if len(sys.argv) > 1 and sys.argv[1] == 'gui':
-                # remove 'gui' argument so it doesn't interfere
-                sys.argv.pop(1)
-             print("HTML2EXE Pro Premium v2.0.0")
-             print("No command line arguments provided or 'gui' command used, launching GUI...")
-             gui_app = ModernGUI()
-             gui_app.run()
+        if len(sys.argv) == 1 or 'gui' in sys.argv:
+            console.print(f"[bold cyan]{APP_NAME} v{APP_VERSION}[/bold cyan]")
+            console.print("[dim]No command line arguments provided, launching GUI...[/dim]")
+            gui_app = ModernGUI()
+            gui_app.run()
         else:
-            print("HTML2EXE Pro Premium v2.0.0")
-            print("Command line arguments provided, using CLI...")
             cli_app()
 
     except KeyboardInterrupt:
-        print("\nOperation cancelled by user")
+        console.print("\n[yellow]Operation cancelled by user[/yellow]")
         sys.exit(0)
     except Exception as e:
-        print(f"Fatal error: {e}")
+        console.print(f"[red]Fatal error:[/red] {e}")
         if "--debug" in sys.argv:
             import traceback
             traceback.print_exc()
         sys.exit(1)
 
+
 if __name__ == "__main__":
-    entry_point()
+    main()

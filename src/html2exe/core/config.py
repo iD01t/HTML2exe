@@ -1,12 +1,18 @@
 import os
 import json
-from typing import List
 from datetime import datetime
-from pydantic import BaseModel, Field
+from typing import List, Optional
+
 import appdirs
+from pydantic import BaseModel, Field
+from rich.console import Console
+
+console = Console()
 
 APP_NAME = "HTML2EXE Pro Premium"
 CONFIG_DIR = appdirs.user_config_dir(APP_NAME)
+os.makedirs(CONFIG_DIR, exist_ok=True)
+
 
 class WindowConfig(BaseModel):
     """Advanced window configuration."""
@@ -23,6 +29,7 @@ class WindowConfig(BaseModel):
     center: bool = True
     maximized: bool = False
 
+
 class SecurityConfig(BaseModel):
     """Enhanced security configuration."""
     csp_enabled: bool = True
@@ -33,17 +40,19 @@ class SecurityConfig(BaseModel):
     allowed_domains: List[str] = Field(default_factory=list)
     disable_context_menu: bool = False
 
+
 class AppMetadata(BaseModel):
     """Enhanced application metadata."""
     name: str = "MyHTMLApp"
     version: str = "1.0.0"
     company: str = "My Company"
-    copyright: str = Field(default_factory=lambda: f"© {datetime.now().year} My Company")
+    copyright: str = f"© {datetime.now().year} My Company"
     description: str = "HTML Desktop Application"
     author: str = "Developer"
     email: str = "developer@company.com"
     website: str = "https://company.com"
     license: str = "Proprietary"
+
 
 class BuildConfig(BaseModel):
     """Advanced build configuration."""
@@ -64,14 +73,19 @@ class BuildConfig(BaseModel):
     include_ffmpeg: bool = False
     strip_debug: bool = True
 
+
 class AdvancedConfig(BaseModel):
     """Advanced features configuration."""
     auto_updater: bool = False
     update_url: str = ""
+    analytics: bool = False
+    analytics_endpoint: str = ""
+    crash_reporting: bool = False
     deep_links: bool = False
     file_associations: List[str] = Field(default_factory=list)
     startup_sound: str = ""
     theme: str = "auto"  # auto, light, dark
+
 
 class AppConfig(BaseModel):
     """Complete premium application configuration."""
@@ -81,15 +95,15 @@ class AppConfig(BaseModel):
     build: BuildConfig = Field(default_factory=BuildConfig)
     advanced: AdvancedConfig = Field(default_factory=AdvancedConfig)
 
-    def save(self, path: str = None):
+    def save(self, path: Optional[str] = None):
         """Save configuration to file."""
         if path is None:
             path = os.path.join(CONFIG_DIR, "config.json")
         with open(path, 'w') as f:
-            json.dump(self.model_dump(), f, indent=2)
+            json.dump(self.dict(), f, indent=2)
 
     @classmethod
-    def load(cls, path: str = None):
+    def load(cls, path: Optional[str] = None) -> "AppConfig":
         """Load configuration from file."""
         if path is None:
             path = os.path.join(CONFIG_DIR, "config.json")
@@ -97,7 +111,7 @@ class AppConfig(BaseModel):
             if os.path.exists(path):
                 with open(path, 'r') as f:
                     data = json.load(f)
-                return cls.model_validate(data)
+                return cls(**data)
         except Exception as e:
-            print(f"Warning: Could not load config: {e}")
+            console.print(f"[yellow]Warning: Could not load config: {e}[/yellow]")
         return cls()
