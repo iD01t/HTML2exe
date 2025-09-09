@@ -1,22 +1,26 @@
 import os
 import sys
-import typer
 import subprocess
 import importlib
+import shutil
 import time
 import webbrowser
 
+import typer
+from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
+from rich.table import Table
 
+import json
 from ..core.config import AppConfig
-from ..core.preflight import PreflightChecker
-from ..core.debugger import BulletProofExporter
 from ..core.builder import BuildEngine
+from ..core.packager import create_installer
 from ..gui.main import ModernGUI
+from ..main import APP_VERSION
 
-APP_VERSION = "2.0.0"
-
+console = Console()
 app = typer.Typer(help="HTML2EXE Pro Premium - Convert HTML to Professional Desktop Apps")
+
 
 @app.command()
 def build(
@@ -29,83 +33,58 @@ def build(
     width: int = typer.Option(1200, "--width", help="Window width"),
     height: int = typer.Option(800, "--height", help="Window height"),
     debug: bool = typer.Option(False, "--debug", help="Enable debug mode"),
-    output: str = typer.Option("dist", "--output", "-o", help="Output directory"),
-    bullet_proof: bool = typer.Option(True, "--bullet-proof/--no-bullet-proof", help="Use bullet-proof export with auto-debug and recovery"),
-    upx: bool = typer.Option(False, "--upx/--no-upx", help="Enable UPX compression (requires UPX in PATH)"),
-    skip_preflight: bool = typer.Option(False, "--skip-preflight", help="Skip pre-flight checks"),
+    output: str = typer.Option("dist", "--output", "-o", help="Output directory")
 ):
     """Build HTML application to executable."""
-    print(f"HTML2EXE Pro Premium v{APP_VERSION}")
-    print(f"Building application: {name}")
+    console.print(f"[bold green]HTML2EXE Pro Premium v{APP_VERSION}[/bold green]")
+    console.print(f"Building application: [bold]{name}[/bold]")
 
-    source_type = "url" if src.startswith(("http://", "https://")) else "folder"
-
-    if not skip_preflight:
-        # Run pre-flight checks
-        print("✈️  Running pre-flight checks...")
-        report = PreflightChecker.run_all_checks(src, source_type)
-
-        if report["errors"]:
-            print("❌ Pre-flight checks failed with critical errors:")
-            for error in report["errors"]:
-                print(f"  - {error}")
-            raise typer.Exit(1)
-
-        if report["warnings"]:
-            print("⚠️ Pre-flight checks found warnings:")
-            for warning in report["warnings"]:
-                print(f"  - {warning}")
-            if not typer.confirm("Do you want to continue with the build?"):
-                raise typer.Exit()
-    else:
-        report = {}
-
-    # Create configuration
     config = AppConfig()
     config.metadata.name = name
     config.build.source_path = src
-    config.build.source_type = source_type
+    config.build.source_type = "url" if src.startswith(("http://", "https://")) else "folder"
     config.build.icon_path = icon
     config.build.onefile = onefile
     config.build.offline_mode = offline
     config.build.debug = debug
     config.build.output_dir = output
-    config.build.upx_compress = upx
     config.window.kiosk = kiosk
     config.window.width = width
     config.window.height = height
 
-    # Apply recommended settings
-    PreflightChecker.apply_recommended_settings(config, report)
+    if config.build.source_type == "folder" and not os.path.exists(src):
+        console.print("[red]Error: Source folder does not exist[/red]")
+        raise typer.Exit(1)
 
-    # Always use bullet-proof export
-    print("🛡️ Using bullet-proof export with auto-debug and recovery...")
-    try:
-        exporter = BulletProofExporter(config)
-        if debug:
-            exporter.debugger.enable_debug_mode()
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        transient=True
+    ) as progress:
+        task = progress.add_task("Building...", total=100)
 
-        result = exporter.export_with_auto_debug()
+        def progress_callback(message):
+            progress.update(task, description=message)
+            progress.advance(task, 10)
 
-        if result["success"]:
-            print("✅ Bullet-proof export completed successfully!")
-            print(f"📁 Output: {result['exe_path']}")
-            print(f"📊 Size: {result['exe_size']}")
-            print(f"⏱️ Time: {result['build_time']}")
-            print(f"🎯 Strategy: {result.get('strategy', 'Standard Export')}")
-        else:
-            print(f"❌ Bullet-proof export failed: {result['error']}")
-            if 'debug_report' in result:
-                print(f"📋 Debug report saved: {result['debug_report']}")
-            if 'recommendations' in result:
-                print("\n💡 Recommendations:")
-                for rec in result['recommendations']:
-                    print(f"  • {rec}")
+        try:
+            engine = BuildEngine(config, progress_callback)
+            result = engine.build()
+
+            if result["success"]:
+                console.print("[green]✅ Build completed successfully![/green]")
+                console.print(f"[blue]📁 Output:[/blue] {result['exe_path']}")
+                console.print(f"[blue]📊 Size:[/blue] {result['exe_size']}")
+                console.print(f"[blue]⏱️ Time:[/blue] {result['build_time']}")
+            else:
+                console.print(f"[red]❌ Build failed:[/red] {result['error']}")
+                raise typer.Exit(1)
+
+        except Exception as e:
+            console.print(f"[red]❌ Build error:[/red] {e}")
             raise typer.Exit(1)
 
-    except Exception as e:
-        print(f"❌ Bullet-proof export error: {e}")
-        raise typer.Exit(1)
 
 @app.command()
 def serve(
@@ -114,158 +93,172 @@ def serve(
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser automatically")
 ):
     """Serve HTML folder for development and testing."""
-    print(f"HTML2EXE Pro Development Server")
-    print(f"Serving: {src}")
-    print(f"Port: {port}")
+    console.print(f"[bold blue]HTML2EXE Pro Development Server[/bold blue]")
+    console.print(f"Serving: [bold]{src}[/bold]")
+    console.print(f"Port: [bold]{port}[/bold]")
 
     if not os.path.exists(src):
-        print("Error: Source folder does not exist")
+        console.print("[red]Error: Source folder does not exist[/red]")
         raise typer.Exit(1)
 
     try:
-        import http.server
-        import socketserver
+        from ..core.webview_manager import WebViewManager
+        config = AppConfig()
+        config.build.source_path = src
+        config.build.source_type = "folder"
 
-        Handler = http.server.SimpleHTTPRequestHandler
+        webview_manager = WebViewManager(config)
+        webview_manager.start_server(src, port)
 
-        os.chdir(src)
-        with socketserver.TCPServer(("", port), Handler) as httpd:
-            url = f"http://localhost:{port}"
-            print(f"🚀 Server running at: {url}")
-            if open_browser:
-                webbrowser.open(url)
+        url = f"http://localhost:{port}"
+        console.print(f"[green]🚀 Server running at:[/green] {url}")
 
-            print("Press Ctrl+C to stop the server")
-            httpd.serve_forever()
+        if open_browser:
+            webbrowser.open(url)
+
+        console.print("Press [bold]Ctrl+C[/bold] to stop the server")
+
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Server stopped[/yellow]")
 
     except Exception as e:
-        print(f"Server error: {e}")
+        console.print(f"[red]Server error:[/red] {e}")
         raise typer.Exit(1)
+
 
 @app.command()
 def doctor():
     """Check system requirements and dependencies."""
-    print(f"HTML2EXE Pro System Diagnostics")
+    console.print(f"[bold blue]HTML2EXE Pro System Diagnostics[/bold blue]")
 
     checks = []
 
-    # Python version
     python_version = sys.version_info
-    if python_version >= (3, 8):
+    if python_version >= (3, 10):
         checks.append(("✅", f"Python {python_version.major}.{python_version.minor}", "OK"))
     else:
-        checks.append(("❌", f"Python {python_version.major}.{python_version.minor}", "Requires Python 3.8+"))
+        checks.append(("❌", f"Python {python_version.major}.{python_version.minor}", "Requires Python 3.10+"))
 
-    # PyInstaller
     try:
         result = subprocess.run([sys.executable, "-m", "PyInstaller", "--version"],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, check=False)
         if result.returncode == 0:
             checks.append(("✅", "PyInstaller", result.stdout.strip()))
         else:
             checks.append(("❌", "PyInstaller", "Not installed"))
-    except:
+    except FileNotFoundError:
         checks.append(("❌", "PyInstaller", "Not found"))
 
-    # Dependencies
-    for package in ["flask", "pywebview", "pillow", "requests", "rich", "typer", "beautifulsoup4"]:
+    for package in ["flask", "pywebview", "pillow", "requests", "rich", "typer"]:
         try:
-            module = importlib.import_module(package.replace('pywebview', 'webview').replace('beautifulsoup4', 'bs4'))
+            module = importlib.import_module(package)
             version = getattr(module, '__version__', 'Unknown')
             checks.append(("✅", package, version))
         except ImportError:
             checks.append(("❌", package, "Not installed"))
 
-    # UPX check
-    try:
-        result = subprocess.run(["upx", "--version"], capture_output=True, text=True)
-        if result.returncode == 0:
-            version_line = result.stdout.split('\n')[0]
-            checks.append(("✅", "UPX", version_line))
-        else:
-            checks.append(("⚠️", "UPX", "Not in PATH (optional for compression)"))
-    except:
-        checks.append(("⚠️", "UPX", "Not installed (optional for compression)"))
-
-    # WebView2 runtime check (Windows)
-    if sys.platform == "win32":
-        try:
-            import shutil
-            if shutil.which("msedgewebview2.exe") or os.environ.get("WEBVIEW2_RUNTIME"):
-                checks.append(("✅", "WebView2", "Available"))
-            else:
-                checks.append(("⚠️", "WebView2", "Not found (will prompt to install)"))
-        except:
-            checks.append(("⚠️", "WebView2", "Check failed"))
-
-    # System info
     checks.append(("ℹ️", "Platform", f"{sys.platform}"))
-    checks.append(("ℹ️", "Architecture", f"{sys.maxsize > 2**32 and '64-bit' or '32-bit'}"))
+    checks.append(("ℹ️", "Architecture", f"{'64-bit' if sys.maxsize > 2**32 else '32-bit'}"))
 
-    # Display results
-    print("\n--- System Check Results ---")
+    table = Table(title="System Check Results")
+    table.add_column("Status", style="bold")
+    table.add_column("Component", style="cyan")
+    table.add_column("Version/Status", style="green")
+
     for status, component, version in checks:
-        print(f"{status} {component:<15} {version}")
+        table.add_row(status, component, version)
 
-    # Recommendations
+    console.print(table)
+
     issues = [check for check in checks if check[0] == "❌"]
     if issues:
-        print("\nIssues Found:")
+        console.print("\n[bold red]Issues Found:[/bold red]")
         for status, component, issue in issues:
-            print(f"  • {component}: {issue}")
+            console.print(f"  • {component}: {issue}")
 
-        print("\nRecommended Actions:")
-        print("  1. Update Python to 3.8+ if needed")
-        print("  2. Install missing packages using pip")
-        print("  3. Restart the application after installing dependencies")
+        console.print("\n[bold yellow]Recommended Actions:[/bold yellow]")
+        console.print("  1. Update Python to 3.10+ if needed")
+        console.print("  2. Install missing packages: pip install -r requirements.txt")
+        console.print("  3. Restart the application after installing dependencies")
     else:
-        print("\n🎉 All checks passed! Your system is ready.")
+        console.print("\n[bold green]🎉 All checks passed! Your system is ready.[/bold green]")
+
 
 @app.command()
-def doctor(
-    src: str = typer.Option(..., "--src", "-s", help="Source folder or URL to analyze")
-):
-    """Run pre-flight checks on the source and system."""
-    print(f"HTML2EXE Pro Premium - Pre-flight Check")
-    print(f"Analyzing: {src}")
-    print()
+def clean():
+    """Clean build artifacts and temporary files."""
+    console.print("[bold blue]Cleaning build artifacts...[/bold blue]")
 
-    source_type = "url" if src.startswith(("http://", "https://")) else "folder"
-    report = PreflightChecker.run_all_checks(src, source_type)
+    cleaned = []
+    build_dirs = ["build", "dist", "__pycache__", "*.egg-info"]
 
-    print("✈️  Pre-flight Check Report:")
-    print("=" * 50)
+    for pattern in build_dirs:
+        import glob
+        for path in glob.glob(pattern, recursive=True):
+            if os.path.exists(path):
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                    cleaned.append(f"📁 {path}")
+                else:
+                    os.remove(path)
+                    cleaned.append(f"📄 {path}")
 
-    if report["errors"]:
-        print("\n❌ Errors:")
-        for error in report["errors"]:
-            print(f"  - {error}")
+    temp_patterns = ["*.pyc", "*.pyo", "*.tmp", "*.log"]
+    for pattern in temp_patterns:
+        for path in glob.glob(f"**/{pattern}", recursive=True):
+            try:
+                os.remove(path)
+                cleaned.append(f"🗑️ {path}")
+            except OSError:
+                pass
 
-    if report["warnings"]:
-        print("\n⚠️ Warnings:")
-        for warning in report["warnings"]:
-            print(f"  - {warning}")
-
-    if report["suggestions"]:
-        print("\n💡 Suggestions:")
-        for suggestion in report["suggestions"]:
-            print(f"  - {suggestion}")
-
-    print("\n" + "="*50)
-    if report["errors"]:
-        print("🔴 Pre-flight failed. Please fix the errors before building.")
-        raise typer.Exit(1)
+    if cleaned:
+        console.print(f"[green]✅ Cleaned {len(cleaned)} items:[/green]")
+        for item in cleaned[:10]:
+            console.print(f"  {item}")
+        if len(cleaned) > 10:
+            console.print(f"  ... and {len(cleaned) - 10} more items")
     else:
-        print("🟢 Pre-flight checks passed. Ready to build.")
+        console.print("[yellow]No build artifacts found to clean[/yellow]")
+
 
 @app.command()
 def gui():
     """Launch the graphical user interface."""
-    print(f"Launching HTML2EXE Pro Premium GUI...")
+    console.print(f"[bold green]Launching HTML2EXE Pro Premium GUI...[/bold green]")
 
     try:
         gui_app = ModernGUI()
         gui_app.run()
     except Exception as e:
-        print(f"GUI Error: {e}")
+        console.print(f"[red]GUI Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
+@app.command()
+def package(
+    report_path: str = typer.Option("dist/build_report.json", "--report", "-r", help="Path to the build_report.json file")
+):
+    """Package the application into a Windows installer."""
+    console.print(f"[bold green]Creating installer...[/bold green]")
+
+    if not os.path.exists(report_path):
+        console.print(f"[red]Error: Build report not found at {report_path}[/red]")
+        raise typer.Exit(1)
+
+    with open(report_path, 'r') as f:
+        report = json.load(f)
+
+    config = AppConfig(**report['config'])
+    exe_path = report['exe_path']
+
+    try:
+        installer_path = create_installer(config, exe_path)
+        console.print(f"[green]✅ Installer created successfully![/green]")
+        console.print(f"[blue]📁 Output:[/blue] {installer_path}")
+    except Exception as e:
+        console.print(f"[red]❌ Installer creation failed:[/red] {e}")
         raise typer.Exit(1)

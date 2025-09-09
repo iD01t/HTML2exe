@@ -1,152 +1,110 @@
-import os
 import sys
-import json
-from typing import Dict, Any, List
-from bs4 import BeautifulSoup
-import urllib
+import os
+import subprocess
+import shutil
+from typing import List
 
 from .config import AppConfig
 
-class PreflightChecker:
-    """Comprehensive pre-flight check system for bullet-proof exports."""
 
-    @staticmethod
-    def run_all_checks(source_path: str, source_type: str) -> Dict[str, Any]:
-        """Run all pre-flight checks and return a report."""
-        report = {
-            "recommendations": [],
-            "warnings": [],
-            "errors": [],
-            "suggestions": [],
-            "estimated_size": "40-80 MB",
-            "recommended_onefile": True,
-            "recommended_console": False,
-            "recommended_debug": False,
-            "recommended_upx": True,
-        }
+def check_python_version() -> List[str]:
+    """Check if Python version is sufficient."""
+    errors = []
+    if sys.version_info < (3, 10):
+        errors.append(f"Python 3.10 or newer is required. You are using {sys.version.split(' ')[0]}.")
+    return errors
 
-        # System checks
-        PreflightChecker._check_python_version(report)
-        PreflightChecker._check_pyinstaller(report)
-        PreflightChecker._check_memory(report)
 
-        # Source checks
-        if source_type == "folder":
-            PreflightChecker._check_folder_source(source_path, report)
-        elif source_type == "url":
-            PreflightChecker._check_url_source(source_path, report)
+def check_pyinstaller() -> List[str]:
+    """Check if PyInstaller is installed and accessible."""
+    errors = []
+    try:
+        result = subprocess.run([sys.executable, "-m", "PyInstaller", "--version"],
+                                capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            errors.append("PyInstaller is not installed or not in PATH. Please run 'pip install pyinstaller'.")
+    except FileNotFoundError:
+        errors.append("PyInstaller is not installed or not in PATH. Please run 'pip install pyinstaller'.")
+    return errors
 
-        return report
 
-    @staticmethod
-    def _check_python_version(report: Dict[str, Any]):
-        if sys.version_info < (3, 8):
-            report["errors"].append("Python 3.8+ is required.")
-
-    @staticmethod
-    def _check_pyinstaller(report: Dict[str, Any]):
+def check_vc_redist() -> List[str]:
+    """Check for Visual C++ Redistributable on Windows."""
+    errors = []
+    if sys.platform == "win32":
         try:
-            import PyInstaller
-        except ImportError:
-            report["errors"].append("PyInstaller is not installed. Please run 'pip install pyinstaller'.")
-
-    @staticmethod
-    def _check_memory(report: Dict[str, Any]):
-        try:
-            import psutil
-            available_memory = psutil.virtual_memory().available / (1024**3)  # GB
-            if available_memory < 1:
-                report["warnings"].append(f"Low memory detected ({available_memory:.2f}GB). Builds may be slow or fail.")
-                report["recommended_onefile"] = False
-                report["suggestions"].append("Consider using directory mode (--no-onefile) for better performance on low-memory systems.")
-        except ImportError:
-            report["warnings"].append("Could not check available memory. 'psutil' is not installed.")
-
-    @staticmethod
-    def _check_folder_source(source_path: str, report: Dict[str, Any]):
-        if not os.path.exists(source_path):
-            report["errors"].append(f"Source folder not found: {source_path}")
-            return
-
-        files = [os.path.join(dp, f) for dp, dn, filenames in os.walk(source_path) for f in filenames]
-
-        if not any(f.endswith("index.html") for f in files):
-            report["warnings"].append("No 'index.html' file found in the source folder. A default one will be generated.")
-
-        # Check for package.json
-        package_json_path = os.path.join(source_path, "package.json")
-        if os.path.exists(package_json_path):
+            import winreg
+            # This is a common key for the VC++ 2015-2022 redistributable
+            key_path = r"SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64"
             try:
-                with open(package_json_path, "r") as f:
-                    package_data = json.load(f)
-                    report["suggestions"].append(f"Found 'package.json' for project '{package_data.get('name', 'N/A')}'.")
-            except json.JSONDecodeError:
-                report["warnings"].append("'package.json' is present but could not be read (invalid JSON).")
+                winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path)
+            except FileNotFoundError:
+                errors.append("Microsoft Visual C++ Redistributable is not found. It is recommended for some packages. Please install it.")
+        except ImportError:
+            # Should not happen on Windows if pywin32 is installed
+            pass
+    return errors
 
-        # Check for broken links and absolute paths
-        html_files = [f for f in files if f.endswith((".html", ".htm"))]
-        for html_file in html_files:
-            PreflightChecker._scan_html_file(html_file, source_path, report)
 
-    @staticmethod
-    def _check_url_source(source_path: str, report: Dict[str, Any]):
-        try:
-            response = urllib.request.urlopen(source_path, timeout=10)
-            if response.getcode() >= 400:
-                report["errors"].append(f"URL returned status code {response.getcode()}.")
-        except Exception as e:
-            report["errors"].append(f"Could not access URL: {e}")
+def check_upx(config: AppConfig) -> List[str]:
+    """Check for UPX if compression is enabled."""
+    errors = []
+    if config.build.upx_compress:
+        if not shutil.which("upx"):
+            errors.append("UPX compression is enabled, but UPX is not found in your system's PATH.")
+    return errors
 
-    @staticmethod
-    def _scan_html_file(html_file_path: str, base_path: str, report: Dict[str, Any]):
-        try:
-            with open(html_file_path, "r", encoding="utf-8") as f:
-                soup = BeautifulSoup(f, "html.parser")
-        except Exception as e:
-            report["warnings"].append(f"Could not parse HTML file: {html_file_path}. Error: {e}")
-            return
 
-        tags_and_attrs = {
-            "a": "href",
-            "link": "href",
-            "img": "src",
-            "script": "src",
-            "source": "src",
-        }
+def check_project_files(config: AppConfig) -> List[str]:
+    """Check for necessary project files."""
+    errors = []
+    if config.build.source_type == "folder":
+        if not os.path.exists(config.build.source_path):
+            errors.append(f"Source folder not found: {config.build.source_path}")
+        elif not os.path.exists(os.path.join(config.build.source_path, "index.html")):
+            errors.append(f"index.html not found in source folder: {config.build.source_path}")
+    if config.build.icon_path and not os.path.exists(config.build.icon_path):
+        errors.append(f"Icon file not found: {config.build.icon_path}")
+    return errors
 
-        for tag, attr in tags_and_attrs.items():
-            for element in soup.find_all(tag):
-                if element.has_attr(attr):
-                    url = element[attr]
-                    if not url or url.startswith(("#", "data:", "http:", "https:", "//")):
-                        continue
 
-                    if os.path.isabs(url):
-                        report["errors"].append(f"Found absolute path in '{os.path.basename(html_file_path)}': '{url}'. This will not work in the final executable.")
-                        continue
+def find_iscc() -> str:
+    """Find the Inno Setup compiler."""
+    if sys.platform != "win32":
+        return None
 
-                    parsed_url = urllib.parse.urlparse(url)
-                    if parsed_url.scheme or parsed_url.netloc:
-                        continue # Skip external URLs
+    program_files = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
+    program_files_64 = os.environ.get("ProgramW6432", "C:\\Program Files")
 
-                    local_path = os.path.join(os.path.dirname(html_file_path), url)
-                    if not os.path.exists(local_path):
-                        report["warnings"].append(f"Broken link in '{os.path.basename(html_file_path)}': File not found for '{url}'.")
+    possible_paths = [
+        os.path.join(program_files, "Inno Setup 6", "iscc.exe"),
+        os.path.join(program_files_64, "Inno Setup 6", "iscc.exe")
+    ]
 
-    @staticmethod
-    def apply_recommended_settings(config: AppConfig, settings: Dict[str, Any]):
-        """Apply recommended settings to configuration."""
-        if settings.get("recommended_onefile") is not None:
-            config.build.onefile = settings["recommended_onefile"]
+    for path in possible_paths:
+        if os.path.exists(path):
+            return path
 
-        if settings.get("recommended_console") is not None:
-            config.build.console = settings["recommended_console"]
+    if shutil.which("iscc"):
+        return "iscc"
 
-        if settings.get("recommended_debug") is not None:
-            config.build.debug = settings["recommended_debug"]
+    return None
 
-        if settings.get("recommended_upx") is not None:
-            config.build.upx_compress = settings["recommended_upx"]
+def check_inno_setup() -> List[str]:
+    """Check for Inno Setup compiler."""
+    errors = []
+    if sys.platform == "win32" and not find_iscc():
+        errors.append("Inno Setup is not installed or not in PATH. Installer creation will be disabled.")
+    return errors
 
-        if settings.get("recommended_offline") is not None:
-            config.build.offline_mode = settings["recommended_offline"]
+def run_preflight_checks(config: AppConfig, check_installer=False) -> List[str]:
+    """Run all pre-flight checks."""
+    errors = []
+    errors.extend(check_python_version())
+    errors.extend(check_pyinstaller())
+    errors.extend(check_vc_redist())
+    errors.extend(check_upx(config))
+    errors.extend(check_project_files(config))
+    if check_installer:
+        errors.extend(check_inno_setup())
+    return errors

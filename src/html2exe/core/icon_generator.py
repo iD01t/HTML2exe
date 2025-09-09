@@ -1,5 +1,5 @@
-import os
 from PIL import Image, ImageDraw, ImageFont
+
 
 class IconGenerator:
     """Professional icon generator with multiple formats."""
@@ -22,48 +22,17 @@ class IconGenerator:
         margin = size // 8
         circle_size = size - 2 * margin
         draw.ellipse([margin, margin, margin + circle_size, margin + circle_size],
-                    fill=(255, 255, 255, 30))
+                     fill=(255, 255, 255, 30))
 
         # Draw text
-        font = None
-        font_size = size // 4
-
-        # List of common, cross-platform fonts to try (lowercase for case-insensitivity)
-        # Priority: bundled fonts first, then system fonts
-        font_names = [
-            "dejavusans.ttf", "liberationsans-regular.ttf", "arial.ttf", "calibri.ttf"
-        ]
-
-        # Try bundled fonts first (if available)
-        bundled_fonts = [
-            os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf"),
-            os.path.join(os.path.dirname(__file__), "fonts", "LiberationSans-Regular.ttf")
-        ]
-
-        # Check for bundled fonts first
-        for font_path in bundled_fonts:
-            if os.path.exists(font_path):
-                try:
-                    font = ImageFont.truetype(font_path, font_size)
-                    break
-                except IOError:
-                    continue
-
-        for font_name in font_names:
+        try:
+            font_size = size // 4
+            font = ImageFont.truetype("arial.ttf", font_size)
+        except IOError:
             try:
-                font = ImageFont.truetype(font_name, font_size)
-                break  # Stop if font is found
+                font = ImageFont.truetype("calibri.ttf", font_size)
             except IOError:
-                continue # Try next font
-
-        if not font:
-            print(f"⚠️  Warning: No premium fonts found. Using default bitmap font.")
-            print(f"💡 For consistent icon quality, bundle DejaVu Sans fonts:")
-            print(f"   1. Download from: https://dejavu-fonts.github.io/")
-            print(f"   2. Extract DejaVuSans.ttf and DejaVuSans-Bold.ttf")
-            print(f"   3. Place them in the 'fonts/' directory")
-            print(f"   4. The icon generator will automatically detect them")
-            font = ImageFont.load_default()
+                font = ImageFont.load_default()
 
         # Get text dimensions
         bbox = draw.textbbox((0, 0), text, font=font)
@@ -79,5 +48,5 @@ class IconGenerator:
         draw.text((x, y), text, fill=(255, 255, 255, 255), font=font)
 
         # Save as ICO
-        img.save(output_path, format='ICO', sizes=[(16,16), (32,32), (48,48), (64,64), (128,128), (256,256)])
+        img.save(output_path, format='ICO', sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
         return output_path
