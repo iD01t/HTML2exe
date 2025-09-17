@@ -3,6 +3,8 @@ import sys
 import tempfile
 import webbrowser
 import subprocess
+import threading
+import json
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from datetime import datetime
@@ -27,7 +29,9 @@ class ModernGUI:
         ]
         self.step_frames = {}
         self.preview_window = None
-        self.theme = 'dark'
+        # Initialize theme from config (fallback to dark)
+        cfg_theme = getattr(self.config.advanced, 'theme', 'auto')
+        self.theme = 'dark' if cfg_theme in ('auto', 'dark') else 'light'
 
     def run(self):
         """Run the modern GUI application."""
@@ -282,6 +286,12 @@ class ModernGUI:
         ttk.Label(dims_grid, text="Height:").grid(row=0, column=2, sticky='w', padx=(0, 10))
         self.height_var = tk.IntVar(value=self.config.window.height)
         ttk.Spinbox(dims_grid, from_=300, to=2160, textvariable=self.height_var, width=10).grid(row=0, column=3)
+        ttk.Label(dims_grid, text="Min Width:").grid(row=1, column=0, sticky='w', padx=(0, 10), pady=(10,0))
+        self.min_width_var = tk.IntVar(value=self.config.window.min_width)
+        ttk.Spinbox(dims_grid, from_=200, to=4096, textvariable=self.min_width_var, width=10).grid(row=1, column=1, padx=(0, 20), pady=(10,0))
+        ttk.Label(dims_grid, text="Min Height:").grid(row=1, column=2, sticky='w', padx=(0, 10), pady=(10,0))
+        self.min_height_var = tk.IntVar(value=self.config.window.min_height)
+        ttk.Spinbox(dims_grid, from_=200, to=2160, textvariable=self.min_height_var, width=10).grid(row=1, column=3, pady=(10,0))
         options_frame = ttk.LabelFrame(frame, text="Window Options", padding=20)
         options_frame.pack(fill='x', padx=20, pady=10)
         self.window_vars = {}
@@ -293,6 +303,8 @@ class ModernGUI:
             var = tk.BooleanVar(value=getattr(self.config.window, field_name, default_value))
             self.window_vars[field_name] = var
             ttk.Checkbutton(options_frame, text=label_text, variable=var).pack(anchor='w', pady=2)
+        self.dpi_aware_var = tk.BooleanVar(value=self.config.window.dpi_aware)
+        ttk.Checkbutton(options_frame, text="🧭 DPI Aware", variable=self.dpi_aware_var).pack(anchor='w', pady=2)
         return frame
 
     def _create_security_step(self):
@@ -304,7 +316,8 @@ class ModernGUI:
         security_options = [("csp_enabled", "🛡️ Enable Content Security Policy", True),
                             ("allow_devtools", "🔧 Allow Developer Tools", True),
                             ("block_external_urls", "🚫 Block External URLs", False),
-                            ("disable_context_menu", "📝 Disable Context Menu", False)]
+                            ("disable_context_menu", "📝 Disable Context Menu", False),
+                            ("same_origin_only", "🔗 Enforce Same-Origin", False)]
         for field_name, label_text, default_value in security_options:
             var = tk.BooleanVar(value=getattr(self.config.security, field_name, default_value))
             self.security_vars[field_name] = var
@@ -315,6 +328,10 @@ class ModernGUI:
         csp_text = tk.Text(csp_frame, height=4, wrap='word', font=('Consolas', 9))
         csp_text.pack(fill='x')
         csp_text.insert('1.0', self.csp_var.get())
+        domains_frame = ttk.LabelFrame(frame, text="Allowed Domains (comma-separated)", padding=20)
+        domains_frame.pack(fill='x', padx=20, pady=10)
+        self.allowed_domains_var = tk.StringVar(value=", ".join(self.config.security.allowed_domains or []))
+        ttk.Entry(domains_frame, textvariable=self.allowed_domains_var, font=('Segoe UI', 10)).pack(fill='x')
         return frame
 
     def _create_build_step(self):
@@ -327,7 +344,8 @@ class ModernGUI:
                          ("console", "💻 Show Console Window", False), ("debug", "🐛 Verbose Logging", False),
                          ("upx_compress", "🗜️ UPX Compression", False),
                          ("single_instance", "👤 Single Instance", True), ("tray_menu", "📱 System Tray", True),
-                         ("strip_debug", "✂️ Strip Debug Info", True)]
+                         ("strip_debug", "✂️ Strip Debug Info", True),
+                         ("include_ffmpeg", "🎬 Include FFmpeg (experimental)", False)]
         for field_name, label_text, default_value in build_options:
             var = tk.BooleanVar(value=getattr(self.config.build, field_name, default_value))
             self.build_vars[field_name] = var
@@ -340,6 +358,20 @@ class ModernGUI:
         ttk.Entry(icon_input_frame, textvariable=self.icon_path_var).pack(side='left', fill='x', expand=True)
         ttk.Button(icon_input_frame, text="Browse...", command=self._browse_icon).pack(side='right', padx=(10, 0))
         ttk.Button(icon_input_frame, text="Generate", command=self._generate_icon).pack(side='right', padx=(10, 0))
+        output_frame = ttk.LabelFrame(frame, text="Output Directory", padding=20)
+        output_frame.pack(fill='x', padx=20, pady=10)
+        output_input_frame = ttk.Frame(output_frame)
+        output_input_frame.pack(fill='x')
+        self.output_dir_var = tk.StringVar(value=self.config.build.output_dir)
+        ttk.Entry(output_input_frame, textvariable=self.output_dir_var).pack(side='left', fill='x', expand=True)
+        ttk.Button(output_input_frame, text="Browse...", command=self._browse_output_dir).pack(side='right', padx=(10, 0))
+        splash_frame = ttk.LabelFrame(frame, text="Splash Screen (image path)", padding=20)
+        splash_frame.pack(fill='x', padx=20, pady=10)
+        splash_input_frame = ttk.Frame(splash_frame)
+        splash_input_frame.pack(fill='x')
+        self.splash_path_var = tk.StringVar(value=self.config.build.splash_screen)
+        ttk.Entry(splash_input_frame, textvariable=self.splash_path_var).pack(side='left', fill='x', expand=True)
+        ttk.Button(splash_input_frame, text="Browse...", command=self._browse_splash).pack(side='right', padx=(10, 0))
         return frame
 
     def _create_advanced_step(self):
@@ -364,6 +396,25 @@ class ModernGUI:
         ttk.Entry(protocol_input_frame, textvariable=self.protocol_var).pack(side='left', fill='x', expand=True,
                                                                               padx=(10, 0))
         ttk.Label(protocol_input_frame, text="://").pack(side='left')
+        integ_frame = ttk.LabelFrame(frame, text="Integration & Telemetry", padding=20)
+        integ_frame.pack(fill='x', padx=20, pady=10)
+        ttk.Label(integ_frame, text="Update URL:").pack(anchor='w')
+        self.update_url_var = tk.StringVar(value=self.config.advanced.update_url)
+        ttk.Entry(integ_frame, textvariable=self.update_url_var).pack(fill='x', pady=(0,10))
+        ttk.Label(integ_frame, text="Analytics Endpoint:").pack(anchor='w')
+        self.analytics_endpoint_var = tk.StringVar(value=self.config.advanced.analytics_endpoint)
+        ttk.Entry(integ_frame, textvariable=self.analytics_endpoint_var).pack(fill='x', pady=(0,10))
+        sound_frame = ttk.LabelFrame(frame, text="Startup Sound (file path)", padding=20)
+        sound_frame.pack(fill='x', padx=20, pady=10)
+        sound_input_frame = ttk.Frame(sound_frame)
+        sound_input_frame.pack(fill='x')
+        self.startup_sound_var = tk.StringVar(value=self.config.advanced.startup_sound)
+        ttk.Entry(sound_input_frame, textvariable=self.startup_sound_var).pack(side='left', fill='x', expand=True)
+        ttk.Button(sound_input_frame, text="Browse...", command=self._browse_startup_sound).pack(side='right', padx=(10, 0))
+        theme_frame = ttk.LabelFrame(frame, text="Theme", padding=20)
+        theme_frame.pack(fill='x', padx=20, pady=10)
+        self.advanced_theme_var = tk.StringVar(value=getattr(self.config.advanced, 'theme', 'auto'))
+        ttk.Combobox(theme_frame, textvariable=self.advanced_theme_var, values=["auto","light","dark"], state='readonly').pack(fill='x')
         return frame
 
     def _create_review_step(self):
@@ -393,11 +444,10 @@ class ModernGUI:
 
     def _update_review(self):
         self._sync_config_from_ui()
-        review_content = f"""
-HTML2EXE Pro Premium - Configuration Review
-==========================================
-...
-        """.strip() # Simplified for brevity
+        try:
+            review_content = json.dumps(self.config.dict(), indent=2)
+        except Exception:
+            review_content = str(self.config)
         self.review_text.delete(1.0, tk.END)
         self.review_text.insert(1.0, review_content)
 
@@ -422,19 +472,35 @@ HTML2EXE Pro Premium - Configuration Review
         # Window
         self.config.window.width = self.width_var.get()
         self.config.window.height = self.height_var.get()
+        self.config.window.min_width = self.min_width_var.get()
+        self.config.window.min_height = self.min_height_var.get()
         for field, var in self.window_vars.items():
             setattr(self.config.window, field, var.get())
+        self.config.window.dpi_aware = self.dpi_aware_var.get()
         # Security
         for field, var in self.security_vars.items():
             setattr(self.config.security, field, var.get())
+        self.config.security.csp_policy = self.csp_var.get()
+        self.config.security.allowed_domains = [d.strip() for d in self.allowed_domains_var.get().split(',') if d.strip()]
         # Build
         for field, var in self.build_vars.items():
             setattr(self.config.build, field, var.get())
         self.config.build.icon_path = self.icon_path_var.get()
+        self.config.build.output_dir = self.output_dir_var.get()
+        self.config.build.splash_screen = self.splash_path_var.get()
         # Advanced
         for field, var in self.advanced_vars.items():
             setattr(self.config.advanced, field, var.get())
         self.config.build.custom_protocol = self.protocol_var.get()
+        self.config.advanced.update_url = self.update_url_var.get()
+        self.config.advanced.analytics_endpoint = self.analytics_endpoint_var.get()
+        self.config.advanced.startup_sound = self.startup_sound_var.get()
+        self.config.advanced.theme = self.advanced_theme_var.get()
+        # Keep UI theme in sync
+        desired_theme = 'dark' if self.config.advanced.theme in ('auto','dark') else 'light'
+        if desired_theme != self.theme:
+            self.theme = desired_theme
+            self._set_theme()
 
     def _browse_source(self):
         if self.source_type_var.get() == "folder":
@@ -454,6 +520,19 @@ HTML2EXE Pro Premium - Configuration Review
         if icon_file:
             self.icon_path_var.set(icon_file)
 
+    def _browse_output_dir(self):
+        folder = filedialog.askdirectory(title="Select Output Directory")
+        if folder:
+            self.output_dir_var.set(folder)
+
+    def _browse_splash(self):
+        splash_file = filedialog.askopenfilename(
+            title="Select Splash Screen Image",
+            filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp *.gif"), ("All files", "*.*")]
+        )
+        if splash_file:
+            self.splash_path_var.set(splash_file)
+
     def _generate_icon(self):
         app_name = self.metadata_vars['name'].get() or "App"
         icon_path = os.path.join(tempfile.gettempdir(), f"{app_name.replace(' ', '_')}.ico")
@@ -472,8 +551,11 @@ HTML2EXE Pro Premium - Configuration Review
         if self.config.build.source_type == "url":
             webbrowser.open(self.config.build.source_path)
         else:
-            # Simplified for now
-            messagebox.showinfo("Preview", "Preview for local folders will be implemented.")
+            index_file = os.path.join(self.config.build.source_path, 'index.html')
+            if os.path.exists(index_file):
+                webbrowser.open(f"file://{index_file}")
+            else:
+                messagebox.showwarning("Preview", "index.html not found in the selected folder.")
 
     def _quick_build(self):
         """Perform a quick build with sane defaults."""
@@ -570,8 +652,14 @@ HTML2EXE Pro Premium - Configuration Review
                 messagebox.showerror("Error", f"Failed to save configuration: {e}")
 
     def _refresh_ui(self):
-        # This needs to be implemented to update all UI fields from self.config
-        pass
+        # Rebuild the UI using current config values
+        try:
+            # Update theme from config before rebuild
+            cfg_theme = getattr(self.config.advanced, 'theme', 'auto')
+            self.theme = 'dark' if cfg_theme in ('auto', 'dark') else 'light'
+        except Exception:
+            pass
+        self._create_layout()
 
     def _update_source_type(self):
         if self.source_type_var.get() == "folder":
@@ -582,7 +670,7 @@ HTML2EXE Pro Premium - Configuration Review
     def _run_system_check(self):
         """Run pre-flight checks and show results."""
         self._sync_config_from_ui()
-        errors = run_preflight_checks(self.config)
+        errors = run_preflight_checks(self.config, check_installer=(sys.platform == 'win32'))
         if errors:
             messagebox.showerror("System Check Failed", "\n".join(errors))
         else:
@@ -782,13 +870,22 @@ class BuildProgressDialog:
 
     def _open_output_folder(self, exe_path):
         try:
-            os.startfile(os.path.dirname(exe_path))
+            folder = os.path.dirname(exe_path)
+            if sys.platform == 'win32':
+                os.startfile(folder)
+            elif sys.platform == 'darwin':
+                subprocess.Popen(['open', folder])
+            else:
+                subprocess.Popen(['xdg-open', folder])
         except Exception as e:
             messagebox.showerror("Error", f"Failed to open folder: {e}")
 
     def _run_application(self, exe_path):
         try:
-            subprocess.Popen([exe_path], shell=True)
+            if sys.platform == 'win32':
+                subprocess.Popen([exe_path], shell=True)
+            else:
+                messagebox.showinfo("Info", "Running built application is supported on Windows builds.")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to run application: {e}")
 
