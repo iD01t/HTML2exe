@@ -1,2 +1,0 @@
-[console_scripts]
-html2exe = html2exe.main:entry_point
