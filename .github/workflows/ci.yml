@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev]"
+
+    - name: Run pre-commit hooks
+      run: |
+        pre-commit run --all-files
+
+    - name: Run tests
+      run: |
+        pytest -v --cov=html2exe --cov-report=xml
+
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+      if: matrix.python-version == '3.11'
+      with:
+        file: ./coverage.xml
+
+  build:
+    needs: test
+    runs-on: windows-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev]"
+
+    - name: Create example HTML
+      run: |
+        mkdir examples
+        echo '<html><head><title>Example</title></head><body><h1>HTML2exe Example</h1></body></html>' > examples/example.html
+
+    - name: Build EXE
+      run: |
+        html2exe --input examples/example.html --output dist/Example.exe --check
+        make build
+
+    - name: Install NSIS
+      run: |
+        choco install nsis -y
+
+    - name: Build installer
+      run: |
+        make dist
+
+    # Commented code signing step (requires secrets)
+    # - name: Sign installer
+    #   env:
+    #     SIGN_CERT: ${{ secrets.SIGN_CERT }}
+    #     SIGN_PASS: ${{ secrets.SIGN_PASS }}
+    #   run: |
+    #     echo "$SIGN_CERT" | base64 -d > cert.pfx
+    #     signtool sign /f cert.pfx /p "$SIGN_PASS" /tr http://timestamp.digicert.com /td sha256 /fd sha256 dist/HTML2exe-Setup-1.0.0.exe
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: html2exe-release
+        path: |
+          dist/HTML2exe.exe
+          dist/HTML2exe-Setup-1.0.0.exe
+        retention-days: 30

@@ -1,0 +1,29 @@
+HTML2exe End User License Agreement (EULA)
+
+IMPORTANT: Read this License carefully before installing HTML2exe.
+
+1. GRANT OF LICENSE
+iD01t Productions grants you a non-exclusive, non-transferable license to install and use HTML2exe on devices you own or control.
+
+2. RESTRICTIONS
+You may not reverse-engineer, decompile, or disassemble the Software except as permitted by law. You may not distribute, rent, lease, or sublicense the Software.
+
+3. OWNERSHIP
+HTML2exe is licensed, not sold. All rights reserved by iD01t Productions.
+
+4. APPLICATIONS CREATED
+You retain full ownership of applications created using HTML2exe. No licensing fees or royalties apply to your generated executables.
+
+5. WARRANTY DISCLAIMER
+HTML2exe is provided "AS IS" without warranty of any kind. You assume all risks arising from use.
+
+6. LIMITATION OF LIABILITY
+In no event shall iD01t Productions be liable for any damages arising from the use of HTML2exe.
+
+7. TERMINATION
+This License terminates if you fail to comply with its terms. Upon termination, you must uninstall and cease use.
+
+By installing HTML2exe, you accept these terms.
+
+© 2024 iD01t Productions. All rights reserved.
+Contact: itechinfomtl@gmail.com | https://id01t.store
